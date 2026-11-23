@@ -3,17 +3,7 @@ import uuid
 from django.conf import settings
 from django.contrib.auth.models import AbstractUser
 from django.db import models
-from django.db.models import (
-    Case,
-    Count,
-    Exists,
-    F,
-    IntegerField,
-    OuterRef,
-    Q,
-    Sum,
-    When,
-)
+from django.db.models import Q
 from django.db.models.functions import Lower
 
 class AppUser(AbstractUser):
@@ -27,6 +17,7 @@ class AppUser(AbstractUser):
 
     synced_through = models.DateTimeField(null=True, blank=True)
     backfilled_to = models.DateTimeField(null=True, blank=True)
+    recommendations_synced_at = models.DateTimeField(null=True, blank=True)
 
     class Meta(AbstractUser.Meta):
         constraints = [
@@ -98,11 +89,8 @@ class Recording(models.Model):
 
     @property
     def cover_art_url(self):
-        if self.caa_id and self.caa_release_mbid:
-            return (
-                f"https://coverartarchive.org/release/"
-                f"{self.caa_release_mbid}/{self.caa_id}-250.jpg"
-            )
+        if self.caa_release_mbid:
+            return f"https://coverartarchive.org/release/{self.caa_release_mbid}/front-250"
         return None
 
     @property
@@ -342,42 +330,47 @@ class Recommendation(models.Model):
                 fields=["user", "recording"], name="recommendation_seen_idx"
             ),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "recording"],
+                name="recommendation_user_recording_uk",
+            ),
+        ]
 
 
-def tag_candidates_for(user, min_votes=2):
+class Playlist(models.Model):
 
-    genre_plays = (
-        RecordingTag.objects.filter(
-            tag__is_genre=True,
-            count__gte=min_votes,
-            recording__listens__user=user,
-        )
-        .values_list("tag_id")
-        .annotate(plays=Count("recording__listens"))
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="playlists"
     )
-    weights = dict(genre_plays)
-    if not weights:
-        return Recording.objects.none()
+    name = models.CharField(max_length=200)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
-    already_heard = Listen.objects.filter(user=user, recording=OuterRef("pk"))
-    already_shown = Recommendation.objects.filter(user=user, recording=OuterRef("pk"))
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["user", "-updated_at"], name="playlist_user_updated_idx"),
+        ]
 
-    score = Sum(
-        Case(
-            *[
-                When(recording_tags__tag_id=tag_id, then=F("recording_tags__count") * plays)
-                for tag_id, plays in weights.items()
-            ],
-            default=0,
-            output_field=IntegerField(),
-        )
+    def __str__(self):
+        return self.name
+
+
+class PlaylistItem(models.Model):
+
+    playlist = models.ForeignKey(
+        Playlist, on_delete=models.CASCADE, related_name="items"
     )
-
-    return (
-        Recording.objects.filter(recording_tags__tag_id__in=weights.keys())
-        .annotate(heard=Exists(already_heard), shown=Exists(already_shown))
-        .filter(heard=False, shown=False)
-        .annotate(score=score)
-        .order_by("-score")
-        .distinct()
+    recording = models.ForeignKey(
+        Recording, on_delete=models.CASCADE, related_name="playlist_items"
     )
+    position = models.PositiveIntegerField()
+    added_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        indexes = [
+            models.Index(fields=["playlist", "position"], name="playlist_item_order_idx"),
+        ]

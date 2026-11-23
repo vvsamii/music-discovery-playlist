@@ -10,10 +10,14 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
@@ -28,6 +32,14 @@ DEBUG = True
 ALLOWED_HOSTS = []
 
 AUTH_USER_MODEL = "music.AppUser"
+
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
+OPENROUTER_TIMEOUT = int(os.environ.get("OPENROUTER_TIMEOUT", "60"))
+MUSICBRAINZ_USER_AGENT = os.environ.get(
+    "MUSICBRAINZ_USER_AGENT",
+    "music-discovery-playlist/1.0 (https://github.com/vvsamii/music-discovery-playlist)",
+)
 
 
 # Application definition
